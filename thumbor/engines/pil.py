@@ -269,6 +269,20 @@ class Engine(BaseEngine):
                 if self.image.mode not in ("L", "P", "RGB", "RGBA"):
                     self.image = self.image.convert("RGBA")
 
+                # GIF has one-bit transparency. Keep the pixels that were
+                # transparent before quantizing, and reserve the last palette
+                # slot for them so no opaque colour takes that index.
+                gif_output = (requested_extension or self.extension) == ".gif"
+                transparent_mask = None
+                if (
+                    gif_output
+                    and self.image.mode == "RGBA"
+                    and self.image.getchannel("A").getextrema()[0] == 0
+                ):
+                    transparent_mask = self.image.getchannel("A").point(
+                        lambda a: 255 if a == 0 else 0
+                    )
+
                 # libimagequant might not be enabled on compile time
                 # but it's better than default octree for RGBA images
                 quantize_method = (
@@ -276,7 +290,14 @@ class Engine(BaseEngine):
                     if pillow_features.check("libimagequant")
                     else None
                 )
-                self.image = self.image.quantize(method=quantize_method)
+                if transparent_mask is not None:
+                    self.image = self.image.quantize(
+                        colors=255, method=quantize_method
+                    )
+                    self.image.paste(255, mask=transparent_mask)
+                    self.image.info["transparency"] = 255
+                else:
+                    self.image = self.image.quantize(method=quantize_method)
 
         ext = requested_extension or self.get_default_extension()
 
